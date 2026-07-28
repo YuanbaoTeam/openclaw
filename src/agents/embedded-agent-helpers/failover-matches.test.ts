@@ -5,6 +5,7 @@ import {
   isAuthErrorMessage,
   isBillingErrorMessage,
   isOverloadedErrorMessage,
+  isProviderCompletedErrorFinishReasonMessage,
   isRateLimitErrorMessage,
   isServerErrorMessage,
   isTimeoutErrorMessage,
@@ -105,6 +106,28 @@ describe("Z.ai vendor error codes (#48988)", () => {
   });
 });
 
+describe("Google invalid API key errors (#114784)", () => {
+  it("classifies the Google Generative AI invalid-key response as auth", () => {
+    const raw =
+      "Google Generative AI API error (400): API key not valid. Please pass a valid API key. [code=INVALID_ARGUMENT]";
+
+    expect(isAuthErrorMessage(raw)).toBe(true);
+    expect(classifyFailoverReason(raw)).toBe("auth");
+  });
+
+  it("classifies the structured API_KEY_INVALID variant as auth", () => {
+    expect(isAuthErrorMessage('{"code":"API_KEY_INVALID"}')).toBe(true);
+  });
+
+  it("does not treat unrelated Google invalid arguments as auth", () => {
+    const raw =
+      "Google Generative AI API error (400): Request contains an invalid argument. [code=INVALID_ARGUMENT]";
+
+    expect(isAuthErrorMessage(raw)).toBe(false);
+    expect(classifyFailoverReason(raw)).toBeNull();
+  });
+});
+
 describe("Chinese provider overload messages", () => {
   const ZHIPU_OVERLOAD = "[1305][该模型当前访问量过大，请您稍后再试]";
 
@@ -177,6 +200,26 @@ describe("server error status classification", () => {
 
   it("does not classify prefixed plain internal server error status prose", () => {
     expect(isServerErrorMessage("Proxy notice: Status: Internal Server Error")).toBe(false);
+  });
+});
+
+describe("provider-completed finish_reason error (#109218)", () => {
+  it("matches bare finish/stop error reasons as provider-completed failures", () => {
+    expect(isProviderCompletedErrorFinishReasonMessage("Provider finish_reason: error")).toBe(true);
+    expect(isTimeoutErrorMessage("Provider finish_reason: error")).toBe(false);
+    expect(classifyFailoverReason("Provider finish_reason: error")).toBe("server_error");
+  });
+
+  it("keeps abort/network/malformed finish reasons in the timeout lane", () => {
+    for (const sample of [
+      "Provider finish_reason: abort",
+      "Provider finish_reason: network_error",
+      "Provider finish_reason: malformed_response",
+    ]) {
+      expect(isProviderCompletedErrorFinishReasonMessage(sample)).toBe(false);
+      expect(isTimeoutErrorMessage(sample)).toBe(true);
+      expect(classifyFailoverReason(sample)).toBe("timeout");
+    }
   });
 });
 
